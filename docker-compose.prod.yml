@@ -9,7 +9,7 @@ services:
     restart: always
     environment:
       POSTGRES_USER: sahyatri
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      POSTGRES_PASSWORD: VkhpPwBIppCRQcXwCS0VvyPgwKjajw1mTGKZ0veRc30=
       POSTGRES_DB: sahyatri
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
@@ -23,7 +23,7 @@ services:
       target: builder
     command: sh -c "npx prisma db push && npx tsx prisma/seed.ts || true"
     environment:
-      DATABASE_URL: postgresql://sahyatri:${DB_PASSWORD}@db:5432/sahyatri
+      DATABASE_URL: postgresql://sahyatri:VkhpPwBIppCRQcXwCS0VvyPgwKjajw1mTGKZ0veRc30=@db:5432/sahyatri
     depends_on:
       db:
         condition: service_healthy
@@ -32,11 +32,11 @@ services:
     build: .
     restart: always
     environment:
-      DATABASE_URL: postgresql://sahyatri:${DB_PASSWORD}@db:5432/sahyatri
-      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env}
-      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
-      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
-      TWOFACTOR_API_KEY: ${TWOFACTOR_API_KEY:-}
+      DATABASE_URL: postgresql://sahyatri:VkhpPwBIppCRQcXwCS0VvyPgwKjajw1mTGKZ0veRc30=@db:5432/sahyatri
+      AUTH_SECRET: 3ad09859ee21cd8c18255666957c5d4c86450b7071b60508f442a9a200027e0f
+      RAZORPAY_KEY_ID: rzp_live_T1QqJn7nqCB4re
+      RAZORPAY_KEY_SECRET: 0kt4Jk4K4Qj4p0axUsrRCxf7
+      TWOFACTOR_API_KEY: 15a447f5-6cdb-11e5-9a14-00163ef91450
       DIGILOCKER_CLIENT_ID: ${DIGILOCKER_CLIENT_ID:-}
     depends_on:
       db:
@@ -55,7 +55,7 @@ services:
     restart: always
     ports: ["80:80", "443:443"]
     environment:
-      DOMAIN: ${DOMAIN:-:80}
+      DOMAIN: sahyatri.online
     command: sh -c 'echo "$$DOMAIN { reverse_proxy app:3000 }" > /etc/caddy/Caddyfile && caddy run --config /etc/caddy/Caddyfile'
     volumes: [caddydata:/data]
     depends_on: [app]
