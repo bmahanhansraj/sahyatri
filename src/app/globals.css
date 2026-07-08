@@ -1,0 +1,51 @@
+@font-face {
+  font-family: 'Ancorli';
+  src: url('/fonts/Ancorli.ttf') format('truetype');
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; }
+
+body {
+  @apply bg-road text-ink font-body antialiased;
+}
+
+/* Signature: the route line — origin dot, dashed path, destination dot.
+   Used on every ride card and the publish flow, echoing the product itself. */
+.route-line {
+  @apply relative pl-5;
+}
+.route-line::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 10px;
+  bottom: 10px;
+  border-left: 2px dashed #B9C0D6;
+}
+.route-dot {
+  @apply absolute left-0 w-3 h-3 rounded-full border-2 bg-white;
+}
+.route-dot--origin { @apply border-teal top-1; }
+.route-dot--dest { @apply border-marigoldDeep bottom-1; }
+
+.card { @apply bg-white rounded-2xl shadow-card border border-line; }
+.btn { @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed; }
+.btn-primary { @apply btn bg-marigold text-ink hover:bg-marigoldDeep hover:text-white; }
+.btn-ghost { @apply btn bg-transparent text-ink hover:bg-ink/5 border border-line; }
+.btn-danger { @apply btn bg-signal text-white hover:bg-red-800; }
+.input { @apply w-full rounded-xl border border-line bg-white px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-marigold; }
+.label { @apply block text-xs font-semibold uppercase tracking-wide text-ink/60 mb-1.5; }
+.badge { @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold; }
+.badge-verified { @apply badge bg-teal/10 text-teal; }
+.badge-kyc { @apply badge bg-signal/10 text-signal; }
+.badge-type { @apply badge bg-ink/5 text-ink/70; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}

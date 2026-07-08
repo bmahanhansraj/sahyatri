@@ -1,0 +1,65 @@
+# Production stack for a single AWS Lightsail/EC2 server.
+#   1. copy .env.production.example to .env and edit it
+#   2. docker compose -f docker-compose.prod.yml up -d
+# Includes: PostgreSQL (persistent volume), one-time DB init, the app,
+# and Caddy for automatic HTTPS once you point your domain at the server.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: sahyatri
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      POSTGRES_DB: sahyatri
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sahyatri"]
+      interval: 5s
+      retries: 12
+
+  db-init:
+    build:
+      context: .
+      target: builder
+    command: sh -c "npx prisma db push && npx tsx prisma/seed.ts || true"
+    environment:
+      DATABASE_URL: postgresql://sahyatri:${DB_PASSWORD}@db:5432/sahyatri
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    build: .
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://sahyatri:${DB_PASSWORD}@db:5432/sahyatri
+      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      TWOFACTOR_API_KEY: ${TWOFACTOR_API_KEY:-}
+      DIGILOCKER_CLIENT_ID: ${DIGILOCKER_CLIENT_ID:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health | grep -q true"]
+      interval: 15s
+      retries: 5
+
+  # Automatic HTTPS. Set DOMAIN in .env once your DNS points here;
+  # leave it as :80 to serve plain HTTP on the server's IP while testing.
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    ports: ["80:80", "443:443"]
+    environment:
+      DOMAIN: ${DOMAIN:-:80}
+    command: sh -c 'echo "$$DOMAIN { reverse_proxy app:3000 }" > /etc/caddy/Caddyfile && caddy run --config /etc/caddy/Caddyfile'
+    volumes: [caddydata:/data]
+    depends_on: [app]
+
+volumes:
+  pgdata:
+  caddydata:

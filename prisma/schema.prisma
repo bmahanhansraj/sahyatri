@@ -1,0 +1,314 @@
+// Sahyatri — Carpooling & Fleet Mobility Platform
+// PostgreSQL in production. See DEPLOYMENT.md for one-click hosted Postgres setup.
+
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  runtime         = "nodejs"
+  moduleFormat    = "esm"
+  engineType      = "client"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums (PRD §2, §3, §6) ─────────────────────────────────────────────────
+
+enum Role {
+  RIDER
+  NON_COMMERCIAL_DRIVER
+  COMMERCIAL_DRIVER
+  FLEET_OPERATOR
+  CORPORATE_ADMIN
+  KYC_APPROVER
+  CUSTOMER_SUPPORT
+  SUPER_ADMIN
+}
+
+enum VehicleType {
+  BIKE
+  CAR
+  BUS
+}
+
+enum ListingType {
+  POOL
+  ONE_WAY
+  BUS
+}
+
+enum RideStatus {
+  DRAFT
+  PUBLISHED
+  PAUSED
+  FULL
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ScheduleType {
+  ONE_TIME   // ad-hoc — counts toward weekly quota for non-commercial drivers
+  RECURRING  // fixed daily commute route
+}
+
+enum KycStatus {
+  NOT_SUBMITTED
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+  PRE_VERIFIED // Corporate Riders (PRD §5.1) — bypasses KYC gates platform-wide
+}
+
+enum BookingStatus {
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH        // rider pays driver directly (Car Pool & One-Way, PRD §14)
+  WALLET
+  UPI
+  CARD
+}
+
+enum AlertType {
+  STATIONARY_VEHICLE
+  ROUTE_DEVIATION
+  ETA_BREACH
+  SPEEDING_HARSH_DRIVING
+  TRIP_NOT_STARTED
+  SOS
+}
+
+enum AlertStatus {
+  OPEN
+  DRIVER_CONFIRMED_SAFE
+  ESCALATED
+  RESOLVED
+}
+
+// ─── Users & Organizations ──────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  phone         String    @unique
+  email         String?   @unique
+  name          String
+  passwordHash  String
+  roles         Role[]    @default([RIDER]) // dual driver/rider on one account (PRD §5.3)
+  gender        String?   // enables women-only pool preference (PRD §11)
+  kycStatus     KycStatus @default(NOT_SUBMITTED)
+  kycExpiresAt  DateTime?
+  isSuspended   Boolean   @default(false)
+  safetyScore   Int       @default(100) // reduced by speeding/harsh-driving flags (PRD §10.2)
+  reliabilityScore Int    @default(100) // reduced by trip-not-started flags
+
+  corporateId   String?
+  corporate     CorporateAccount? @relation(fields: [corporateId], references: [id])
+  fleetId       String?
+  fleet         FleetOperatorAccount? @relation("FleetDrivers", fields: [fleetId], references: [id])
+
+  vehicles      Vehicle[]
+  ridesDriven   Ride[]          @relation("DriverRides")
+  bookings      Booking[]
+  kycSubmissions KycSubmission[] @relation("Submitter")
+  kycReviews    KycSubmission[]  @relation("Reviewer")
+  walletTxns    WalletTransaction[]
+  ratingsGiven  Rating[] @relation("RatingsGiven")
+  ratingsGot    Rating[] @relation("RatingsReceived")
+  ownedFleet    FleetOperatorAccount? @relation("FleetOwner")
+  ownedCorporate CorporateAccount?    @relation("CorporateOwner")
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model FleetOperatorAccount {
+  id        String    @id @default(cuid())
+  name      String
+  ownerId   String    @unique
+  owner     User      @relation("FleetOwner", fields: [ownerId], references: [id])
+  approved  Boolean   @default(false) // Super Admin approval gate (PRD §12.2)
+  drivers   User[]    @relation("FleetDrivers") // tagging optional (PRD §7)
+  vehicles  Vehicle[]
+  createdAt DateTime  @default(now())
+}
+
+model CorporateAccount {
+  id            String   @id @default(cuid())
+  name          String
+  gstin         String?  // GST-compliant invoicing (PRD §14)
+  ownerId       String   @unique
+  owner         User     @relation("CorporateOwner", fields: [ownerId], references: [id])
+  approved      Boolean  @default(false)
+  busKycRequired Boolean @default(false) // configurable per corporate policy (PRD §15)
+  nightRideCutoffHour Int? // policy: restrict rides after set hour (PRD §8)
+  perEmployeeCostCap  Float?
+  employees     User[]
+  createdAt     DateTime @default(now())
+}
+
+// ─── Vehicles & Seat Layouts (PRD §7) ───────────────────────────────────────
+
+model Vehicle {
+  id          String      @id @default(cuid())
+  type        VehicleType
+  regNumber   String      @unique
+  model       String
+  ownerId     String?
+  owner       User?       @relation(fields: [ownerId], references: [id])
+  fleetId     String?
+  fleet       FleetOperatorAccount? @relation(fields: [fleetId], references: [id])
+  seatLayout  Json?       // Bus: { rows, cols, seats: [{ number, row, col, type }] }
+  insuranceExpiry DateTime?
+  permitExpiry    DateTime?
+  fitnessExpiry   DateTime?
+  rides       Ride[]
+  createdAt   DateTime    @default(now())
+}
+
+// ─── Rides & Bookings (PRD §4, §9) ──────────────────────────────────────────
+
+model Ride {
+  id           String       @id @default(cuid())
+  listingType  ListingType
+  vehicleType  VehicleType
+  scheduleType ScheduleType @default(ONE_TIME)
+  status       RideStatus   @default(DRAFT)
+
+  driverId     String
+  driver       User         @relation("DriverRides", fields: [driverId], references: [id])
+  vehicleId    String?
+  vehicle      Vehicle?     @relation(fields: [vehicleId], references: [id])
+
+  origin       String
+  destination  String
+  waypoints    Json?        // [{ name, lat, lng }]
+  originLat    Float?
+  originLng    Float?
+  destLat      Float?
+  destLng      Float?
+  distanceKm   Float
+  departAt     DateTime
+  etaMinutes   Int?         // AI-suggested at publish time (PRD §10.1)
+
+  seatsTotal   Int
+  seatsBooked  Int          @default(0)
+  farePerSeat  Float        // driver-editable within platform bounds (PRD §4.1)
+  womenOnly    Boolean      @default(false)
+  kycRequired  Boolean      @default(false) // resolved at publish by rules engine (PRD §6)
+  isOutstation Boolean      @default(false)
+
+  clonedFromId String?      // duplicate/repeat publish (PRD §4.2)
+  bookings     Booking[]
+  alerts       SafetyAlert[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([status, departAt])
+  @@index([driverId, scheduleType, createdAt]) // weekly quota queries
+}
+
+model Booking {
+  id            String        @id @default(cuid())
+  rideId        String
+  ride          Ride          @relation(fields: [rideId], references: [id])
+  riderId       String
+  rider         User          @relation(fields: [riderId], references: [id])
+  status        BookingStatus @default(CONFIRMED)
+  seats         Int           @default(1)
+  seatNumbers   Json?         // Bus seat selections from layout (PRD §9)
+  fareTotal     Float
+  bookingFee    Float         // configurable by Super Admin per ride type (PRD §14)
+  gstOnFee      Float         // 18% GST above configured booking fee
+  paymentMethod PaymentMethod @default(CASH)
+  kycBypassLogged Boolean     @default(false) // corporate pre-verification audit (PRD §5.1)
+  qrCode        String?       // e-ticket for bus travel
+  createdAt     DateTime      @default(now())
+
+  @@index([riderId, createdAt])
+}
+
+// ─── KYC (PRD §6) ───────────────────────────────────────────────────────────
+
+model KycSubmission {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation("Submitter", fields: [userId], references: [id])
+  documentType String    // e.g. Aadhaar via DigiLocker, DL via Vahan (stubbed integrations)
+  documentRef  String
+  status       KycStatus @default(PENDING)
+  reviewerId   String?
+  reviewer     User?     @relation("Reviewer", fields: [reviewerId], references: [id])
+  remarks      String?   // mandatory on rejection (PRD §5.2)
+  createdAt    DateTime  @default(now())
+  reviewedAt   DateTime?
+
+  @@index([status, createdAt])
+}
+
+// ─── Payments & Wallet (PRD §14) ────────────────────────────────────────────
+
+model WalletTransaction {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  amount    Float    // positive = credit, negative = debit
+  reason    String
+  bookingId String?
+  gatewayRef String? // Razorpay payment id (stub in MVP)
+  createdAt DateTime @default(now())
+}
+
+// ─── Safety, Ratings, Audit, Config (PRD §10–§13) ───────────────────────────
+
+model SafetyAlert {
+  id        String      @id @default(cuid())
+  rideId    String
+  ride      Ride        @relation(fields: [rideId], references: [id])
+  type      AlertType
+  status    AlertStatus @default(OPEN)
+  detail    String?
+  createdAt DateTime    @default(now())
+  resolvedAt DateTime?
+
+  @@index([status, createdAt])
+}
+
+model Rating {
+  id        String   @id @default(cuid())
+  fromId    String
+  from      User     @relation("RatingsGiven", fields: [fromId], references: [id])
+  toId      String
+  to        User     @relation("RatingsReceived", fields: [toId], references: [id])
+  rideId    String
+  stars     Int
+  comment   String?
+  createdAt DateTime @default(now())
+
+  @@unique([fromId, toId, rideId]) // bidirectional but one rating per pair per ride
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  action    String   // e.g. "KYC bypass: Corporate pre-verification" (PRD §5.1)
+  entity    String?
+  entityId  String?
+  detail    Json?
+  createdAt DateTime @default(now())
+
+  @@index([action, createdAt])
+}
+
+// Platform-wide configuration editable by Super Admin (PRD §12.2, §14, §10.2)
+model PlatformConfig {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
