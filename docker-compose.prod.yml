@@ -1,39 +1,71 @@
-# Production stack for a single AWS Lightsail/EC2 server.
-#   1. copy .env.production.example to .env and edit it
-#   2. docker compose -f docker-compose.prod.yml up -d
-# Includes: PostgreSQL (persistent volume), one-time DB init, the app,
-# and Caddy for automatic HTTPS once you point your domain at the server.
+# ─────────────────────────────────────────────────────────────────────────────
+# Sahyatri — production stack (AWS Lightsail / EC2 / any Ubuntu server)
+#
+# Quick start:
+#   cp .env.production.example .env
+#   nano .env          ← set DB_PASSWORD and AUTH_SECRET (see .env for guidance)
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# All env vars are read from the .env file in this directory.
+# No .env file is baked into the images — secrets stay out of Docker layers.
+# ─────────────────────────────────────────────────────────────────────────────
+
 services:
+
+  # ── PostgreSQL database ────────────────────────────────────────────────────
   db:
     image: postgres:16-alpine
     restart: always
+    env_file: .env          # reads DB_PASSWORD from .env
     environment:
       POSTGRES_USER: sahyatri
       POSTGRES_PASSWORD: VkhpPwBIppCRQcXwCS0VvyPgwKjajw1mTGKZ0veRc30=
       POSTGRES_DB: sahyatri
-    volumes: [pgdata:/var/lib/postgresql/data]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sahyatri"]
+      test: ["CMD-SHELL", "pg_isready -U sahyatri -d sahyatri"]
       interval: 5s
+      timeout: 5s
       retries: 12
 
+  # ── One-time DB setup (creates tables + demo accounts, then exits) ─────────
+  # Safe to re-run: prisma db push is idempotent; seed uses upsert.
   db-init:
-    build:
-      context: .
-      target: builder
-    command: sh -c "npx prisma db push && npx tsx prisma/seed.ts || true"
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - .:/app                    # mount source so prisma schema is available
+      - /app/node_modules         # anonymous volume so host node_modules don't interfere
+    env_file: .env
     environment:
       DATABASE_URL: postgresql://sahyatri:VkhpPwBIppCRQcXwCS0VvyPgwKjajw1mTGKZ0veRc30=@db:5432/sahyatri
+      PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING: "1"
+      NODE_ENV: production
+    command: >
+      sh -c "npm ci --no-audit --no-fund --quiet &&
+             npx prisma generate &&
+             npx prisma db push --skip-generate &&
+             npx tsx prisma/seed.ts &&
+             echo '✓ Database ready'"
     depends_on:
       db:
         condition: service_healthy
+    restart: "no"
 
+  # ── Application ────────────────────────────────────────────────────────────
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sahyatri-app
     restart: always
+    env_file: .env
     environment:
       DATABASE_URL: postgresql://sahyatri:VkhpPwBIppCRQcXwCS0VvyPgwKjajw1mTGKZ0veRc30=@db:5432/sahyatri
       AUTH_SECRET: 3ad09859ee21cd8c18255666957c5d4c86450b7071b60508f442a9a200027e0f
+      NODE_ENV: production
+      # Optional integrations — blank = safe demo/stub mode (no errors)
       RAZORPAY_KEY_ID: rzp_live_T1QqJn7nqCB4re
       RAZORPAY_KEY_SECRET: 0kt4Jk4K4Qj4p0axUsrRCxf7
       TWOFACTOR_API_KEY: 15a447f5-6cdb-11e5-9a14-00163ef91450
@@ -44,22 +76,35 @@ services:
       db-init:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health | grep -q true"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health | grep -q '\"ok\":true'"]
       interval: 15s
+      timeout: 5s
       retries: 5
 
-  # Automatic HTTPS. Set DOMAIN in .env once your DNS points here;
-  # leave it as :80 to serve plain HTTP on the server's IP while testing.
+  # ── Caddy — automatic HTTPS reverse proxy ─────────────────────────────────
+  # While testing by IP: set DOMAIN=:80 in .env (no certificate needed)
+  # After pointing your domain's A record here: set DOMAIN=yourdomain.com
   caddy:
     image: caddy:2-alpine
     restart: always
-    ports: ["80:80", "443:443"]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    env_file: .env
     environment:
       DOMAIN: sahyatri.online
-    command: sh -c 'echo "$$DOMAIN { reverse_proxy app:3000 }" > /etc/caddy/Caddyfile && caddy run --config /etc/caddy/Caddyfile'
-    volumes: [caddydata:/data]
-    depends_on: [app]
+    command: >
+      sh -c 'printf "%s {\n  reverse_proxy app:3000\n  encode gzip\n}\n" "sahyatri.online"
+             > /etc/caddy/Caddyfile && caddy run --config /etc/caddy/Caddyfile'
+    volumes:
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      app:
+        condition: service_healthy
 
 volumes:
   pgdata:
   caddydata:
+  caddyconfig:

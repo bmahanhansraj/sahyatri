@@ -1,17 +1,41 @@
-# AWS App Runner configuration (source-based deploy from GitHub).
-# Place this file at the repo root as apprunner.yaml, or point App Runner
-# at deploy/aws/apprunner.yaml via "Use a configuration file".
+# ─────────────────────────────────────────────────────────────────────────────
+# Sahyatri — AWS App Runner configuration
+#
+# Place this file at the repo root as apprunner.yaml, then in the App Runner
+# console select "Use a configuration file" when creating the service.
+#
+# Required environment variables (set in App Runner console → Configuration →
+# Environment variables — never commit real values here):
+#   DATABASE_URL   — from RDS: postgresql://postgres:PASSWORD@ENDPOINT:5432/postgres
+#   AUTH_SECRET    — any long random string
+#
+# Optional (blank = demo/stub mode):
+#   RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, TWOFACTOR_API_KEY, DIGILOCKER_CLIENT_ID
+# ─────────────────────────────────────────────────────────────────────────────
 version: 1.0
 runtime: nodejs22
+
 build:
   commands:
     build:
-      - npm ci
+      - export PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1
+      - npm ci --no-audit --no-fund
       - npm run build
+  env:
+    - name: PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING
+      value: "1"
+    - name: NEXT_TELEMETRY_DISABLED
+      value: "1"
+
 run:
-  command: sh -c "npx prisma db push --skip-generate && node .next/standalone/server.js"
+  command: sh -c "npx prisma db push --skip-generate 2>&1 | tail -5 && node .next/standalone/server.js"
   network:
     port: 3000
+    env: PORT
   env:
     - name: NODE_ENV
       value: production
+    - name: NEXT_TELEMETRY_DISABLED
+      value: "1"
+    - name: PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING
+      value: "1"

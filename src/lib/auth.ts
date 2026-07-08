@@ -7,7 +7,15 @@ import { cookies } from 'next/headers';
 import bcrypt from 'bcryptjs';
 import { prisma } from './db';
 
-const secret = () => new TextEncoder().encode(process.env.AUTH_SECRET || 'dev-secret-change-me');
+const secret = () => {
+  const val = process.env.AUTH_SECRET;
+  if (!val || val === 'dev-secret-change-me') {
+    if (process.env.NODE_ENV === 'production')
+      throw new Error('AUTH_SECRET env var is not set. Set it in .env or your deployment environment.');
+    return new TextEncoder().encode('dev-secret-change-me');
+  }
+  return new TextEncoder().encode(val);
+};
 const COOKIE = 'sahyatri_session';
 
 export async function hashPassword(pw: string) {

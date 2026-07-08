@@ -28,7 +28,7 @@ Everything (app + database + automatic HTTPS) runs on a single server.
    ```bash
    sudo -i
    mkdir -p /opt/sahyatri && cd /opt/sahyatri
-   git clone https://github.com/bmahanhansraj/sahyatri .   # or upload the zip and: unzip sahyatri.zip
+   git clone https://github.com/YOUR-USERNAME/sahyatri .   # or upload the zip and: unzip sahyatri.zip
    cp .env.production.example .env
    nano .env    # set DB_PASSWORD and AUTH_SECRET to long random strings; save Ctrl+O, exit Ctrl+X
    docker compose -f docker-compose.prod.yml up -d --build
